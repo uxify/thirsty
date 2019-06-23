@@ -4,24 +4,29 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 
 	"golang.org/x/net/html"
 )
 
-func getHref(t html.Token) (ok bool, href string) {
+func getMetaValue(t html.Token) (ok bool, metaName string, metaContent string) {
 	for _, a := range t.Attr {
-		if a.Key == "href" {
-			href = a.Val
-			ok = true
+		if a.Key == "content" {
+			metaContent = a.Val
+		} else if a.Key == "name" {
+			metaName = a.Val
 		}
 	}
+
+	if len(metaName) > 0 {
+		ok = true
+	}
+
 	return
 }
 
-func getAnchorTags(t html.Token) (isAnchor bool) {
-	isAnchor = t.Data == "a"
-	return isAnchor
+func getMetaTags(t html.Token) (isMeta bool) {
+	isMeta = t.Data == "meta"
+	return isMeta
 }
 
 func crawl(url string, ch chan string, chFinished chan bool) {
@@ -37,34 +42,28 @@ func crawl(url string, ch chan string, chFinished chan bool) {
 	}
 
 	b := resp.Body
-	defer b.Close()
+	defer b.Close() // close Body when the function returns
 
 	z := html.NewTokenizer(b)
 
 	for {
 		tt := z.Next()
 
-		switch {
-		case tt == html.ErrorToken:
+		switch tt {
+		case html.ErrorToken:
 			return
-		case tt == html.StartTagToken:
+		case html.StartTagToken, html.SelfClosingTagToken:
 			t := z.Token()
-
-			anchorTags := getAnchorTags(t)
-
-			if !anchorTags {
+			metaTags := getMetaTags(t)
+			if !metaTags {
 				continue
 			}
-
-			ok, url := getHref(t)
+			ok, metaName, metaContent := getMetaValue(t)
 			if !ok {
 				continue
 			}
-
-			hasProto := strings.Index(url, "http") == 0
-			if hasProto {
-				ch <- url
-			}
+			metaData := metaName + ": " + metaContent
+			ch <- metaData
 		}
 	}
 }
@@ -91,7 +90,7 @@ func main() {
 		}
 	}
 
-	fmt.Println("\nTotal ", len(linkUrls), "links on this page:\n")
+	fmt.Println("\nTotal Meta Values", len(linkUrls))
 
 	for url, _ := range linkUrls {
 		fmt.Println(" - " + url)
