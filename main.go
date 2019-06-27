@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -24,15 +25,32 @@ func getAnchorTags(t html.Token) (isAnchor bool) {
 	return isAnchor
 }
 
-func crawl(url string, ch chan string, chFinished chan bool) {
-	resp, err := http.Get(url)
+func filterDomainLink(crawlUrl string, link string) (ok bool) {
+	u, er := url.Parse(crawlUrl)
+	l, err := url.Parse(link)
+
+	if er != nil || err != nil {
+		fmt.Println("ERROR: Failed to compare domain")
+		return
+	}
+	urlDomain := u.Hostname()
+	linkDomain := l.Hostname()
+
+	if urlDomain == linkDomain {
+		ok = true
+	}
+	return ok
+}
+
+func crawl(crawlUrl string, ch chan string, chFinished chan bool) {
+	resp, err := http.Get(crawlUrl)
 
 	defer func() {
 		chFinished <- true
 	}()
 
 	if err != nil {
-		fmt.Println("ERROR: Failed to crawl \"" + url + "\"")
+		fmt.Println("ERROR: Failed to crawl \"" + crawlUrl + "\"")
 		return
 	}
 
@@ -56,14 +74,17 @@ func crawl(url string, ch chan string, chFinished chan bool) {
 				continue
 			}
 
-			ok, url := getHref(t)
+			ok, link := getHref(t)
 			if !ok {
 				continue
 			}
 
-			hasProto := strings.Index(url, "http") == 0
+			hasProto := strings.Index(link, "http") == 0
 			if hasProto {
-				ch <- url
+				isSameDomain := filterDomainLink(crawlUrl, link)
+				if isSameDomain {
+					ch <- link
+				}
 			}
 		}
 	}
@@ -78,23 +99,23 @@ func main() {
 	chUrls := make(chan string)
 	chFinished := make(chan bool)
 
-	for _, url := range pageUrls {
-		go crawl(url, chUrls, chFinished)
+	for _, crawlUrl := range pageUrls {
+		go crawl(crawlUrl, chUrls, chFinished)
 	}
 
 	for c := 0; c < len(pageUrls); {
 		select {
-		case url := <-chUrls:
-			linkUrls[url] = true
+		case crawlUrl := <-chUrls:
+			linkUrls[crawlUrl] = true
 		case <-chFinished:
 			c++
 		}
 	}
 
-	fmt.Println("\nTotal ", len(linkUrls), "links on this page:\n")
+	fmt.Println("\nTotal ", len(linkUrls), " links on this page:")
 
-	for url, _ := range linkUrls {
-		fmt.Println(" - " + url)
+	for crawlUrl, _ := range linkUrls {
+		fmt.Println(" - " + crawlUrl)
 	}
 
 	close(chUrls)
